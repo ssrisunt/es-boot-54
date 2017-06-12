@@ -38,6 +38,7 @@ import org.springframework.data.util.CloseableIterator;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -64,8 +65,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
-import java.util.zip.Deflater;
-import java.util.zip.GZIPOutputStream;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import static com.fasterxml.jackson.core.Version.unknownVersion;
 import static java.lang.Thread.sleep;
@@ -318,76 +318,127 @@ public class SampleController implements AsyncConfigurer {
 
     }
 
+
+
+
     @RequestMapping(value = "/stream3", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_UTF8_VALUE)
-    public ResponseEntity<StreamingResponseBody> stream3(@RequestParam(value="no") int no) throws IOException {
+    public ResponseEntity<StreamingResponseBody> stream3(@RequestParam(value="no") int no,@RequestParam(value="page", defaultValue = "1000") int page) throws IOException {
 
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON_UTF8).body(
                 out -> {
                     //StreamingGZIPOutputStream gzip = new StreamingGZIPOutputStream(out);
 
-
+                    final LinkedBlockingQueue queue = new LinkedBlockingQueue<List<SampleEntity>>();
 
                     CriteriaQuery criteriaQuery = new CriteriaQuery(new Criteria());
                     criteriaQuery.addIndices(INDEX_NAME);
                     criteriaQuery.addTypes(TYPE_NAME);
                     criteriaQuery.addCriteria(new Criteria("rate").lessThanEqual(no));
-                    criteriaQuery.setPageable(PageRequest.of(0, 1));
+                    criteriaQuery.setPageable(PageRequest.of(0, page));
 
-                    long scrollTimeInMillis = TimeValue.timeValueMinutes(1L).millis();
-                    final ScrolledPage<SampleEntity> page = (ScrolledPage) elasticsearchTemplate.startScroll(scrollTimeInMillis, criteriaQuery, SampleEntity.class);
+                    System.out.println("========");
 
-                    Iterator<SampleEntity> currentHits = page.iterator();
-                    String scrollId = page.getScrollId();
-                    boolean finished = false;
+                    CompletableFuture<Void> many = CompletableFuture.allOf(eventProducer(queue, criteriaQuery, out), eventConsumer(queue, out));
 
-                    //GZIPOutputStream gzip = new GZIPOutputStream(out);
-
-                    OutputStream gzip = out;
-
-                    for (SampleEntity e : page.getContent()) {
-                        gzip.write((e.getId() + " , ").getBytes());
-                        gzip.flush();
-                    }
-
-                    while (!finished && currentHits != null && currentHits.hasNext()) {
-                        ScrolledPage scroll = (ScrolledPage) elasticsearchTemplate.continueScroll(scrollId, scrollTimeInMillis, SampleEntity.class);
-                        currentHits = scroll.iterator();
-                        finished = !currentHits.hasNext();
-                        scrollId = scroll.getScrollId();
-                        for (SampleEntity e : (List<SampleEntity>) scroll.getContent()) {
-                            System.out.println(e.getId() + " , ");
-                            gzip.write((e.getId() + " , ").getBytes());
-                            gzip.flush();
-                        }
-                    }
-
-                    //gzip.close();
-                    //out.close();
+                    many.whenComplete((result, ex) -> System.out.println( "done."));
                 });
 
     }
 
-    public class StreamingGZIPOutputStream extends GZIPOutputStream {
+    public class WorkingUnit {
+        int seq;
+        boolean last = false;
+        List<SampleEntity> item;
 
-        public StreamingGZIPOutputStream(OutputStream out) throws IOException {
-            super(out);
+        public boolean isLast() {
+            return last;
         }
 
-        @Override
-        protected void deflate() throws IOException {
-            // SYNC_FLUSH is the key here, because it causes writing to the output
-            // stream in a streaming manner instead of waiting until the entire
-            // contents of the response are known.  for a large 1 MB json example
-            // this took the size from around 48k to around 50k, so the benefits
-            // of sending data to the client sooner seem to far outweigh the
-            // added data sent due to less efficient compression
-            int len = def.deflate(buf, 0, buf.length, Deflater.SYNC_FLUSH);
-            if (len > 0) {
-                out.write(buf, 0, len);
+        public void setLast(boolean last) {
+            this.last = last;
+        }
+
+        public List<SampleEntity> getItem() {
+            return item;
+        }
+
+        public void setItem(List<SampleEntity> item) {
+            this.item = item;
+        }
+
+        public int getSeq() {
+            return seq;
+        }
+
+        public void setSeq(int seq) {
+            this.seq = seq;
+        }
+
+        public WorkingUnit(boolean last, List<SampleEntity> item) {
+            this.last = last;
+            this.item = item;
+        }
+
+        public WorkingUnit(int seq, boolean last, List<SampleEntity> item) {
+            this.seq = seq;
+            this.last = last;
+            this.item = item;
+        }
+    }
+
+    @Async
+    public CompletableFuture<String> eventConsumer(LinkedBlockingQueue<WorkingUnit> queue, OutputStream out) {
+        boolean done = false;
+        while(!done) {
+            try {
+                WorkingUnit workUnit = queue.take();
+                if (workUnit.getItem()!=null) {
+                    System.out.println("write :" + workUnit.getSeq());
+                    out.write(objectMapper().writeValueAsString(workUnit.getItem()).getBytes());
+                }
+                if (workUnit.isLast()) done = true;
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        return CompletableFuture.completedFuture("result");
+    }
+
+    @Async
+    public CompletableFuture<String> eventProducer(LinkedBlockingQueue queue,CriteriaQuery criteriaQuery, OutputStream out) {
+        long scrollTimeInMillis = TimeValue.timeValueMinutes(1L).millis();
+        final ScrolledPage<SampleEntity> page = (ScrolledPage) elasticsearchTemplate.startScroll(scrollTimeInMillis, criteriaQuery, SampleEntity.class);
+        int i= 0;
+
+        Iterator<SampleEntity> currentHits = page.iterator();
+        String scrollId = page.getScrollId();
+        boolean finished = false;
+
+        if (page.hasContent()) {
+            queue.add(new WorkingUnit(i++,finished,page.getContent()));
+            System.out.println("get :"+ i);
+        } else {
+            finished = true;
+        }
+
+
+        while (!finished ) {
+            ScrolledPage scroll = (ScrolledPage) elasticsearchTemplate.continueScroll(scrollId, scrollTimeInMillis, SampleEntity.class);
+            currentHits = scroll.iterator();
+            finished = !currentHits.hasNext();
+            scrollId = scroll.getScrollId();
+            if (scroll.hasContent()) {
+                i++;
+                queue.add(new WorkingUnit(i,finished,scroll.getContent()));
+                System.out.println("get :"+ i);
             }
         }
 
+        queue.add(new WorkingUnit(true,null));
+
+        return CompletableFuture.completedFuture("result");
     }
+
 
     // Exercise using curl http://localhost:8080/async?input=lorem,ipsum,dolor,sit,amet
     @RequestMapping(path = "/async2", method = RequestMethod.GET)

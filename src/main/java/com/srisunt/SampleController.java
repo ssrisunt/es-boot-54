@@ -1,10 +1,9 @@
 package com.srisunt;
 
-import com.fasterxml.jackson.core.JsonGenerationException;
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.module.SimpleModule;
-import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import com.srisunt.entities.SampleEntity;
 import com.srisunt.facet.ArticleEntity;
 import com.srisunt.facet.ArticleEntityBuilder;
@@ -56,20 +55,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurerAdapter
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import javax.annotation.PostConstruct;
-import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
-import static com.fasterxml.jackson.core.Version.unknownVersion;
 import static java.lang.Thread.sleep;
-import static java.util.Arrays.asList;
 import static java.util.concurrent.CompletableFuture.supplyAsync;
 import static java.util.stream.Collectors.toList;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
@@ -158,48 +154,50 @@ public class SampleController implements AsyncConfigurer {
 
     }
 
-//    @Bean
-//    public MappingJackson2HttpMessageConverter mappingJackson2HttpMessageConverter() {
-//        MappingJackson2HttpMessageConverter jsonConverter = new MappingJackson2HttpMessageConverter();
-//        ObjectMapper objectMapper =jsonConverter.getObjectMapper();
-//        SimpleModule module = new SimpleModule("Stream");
-//        module.addSerializer(CloseableIterator.class, new JsonSerializer<CloseableIterator>() {
-//            @Override
-//            public void serialize(CloseableIterator value, JsonGenerator gen, SerializerProvider serializers)
-//                    throws IOException, JsonProcessingException {
-//                serializers.findValueSerializer(Iterator.class, null)
-//                        .serialize(value, gen, serializers);
-//
-//            }
-//        });
-//
-//        objectMapper.registerModule(module);
-//        jsonConverter.setObjectMapper(objectMapper);
-//        return jsonConverter;
-//    }
-
     @Bean
-    public MappingJackson2HttpMessageConverter mappingJackson2HttpMessageConverter2() {
-        MappingJackson2HttpMessageConverter jackson = new MappingJackson2HttpMessageConverter();
-        ObjectMapper om = jackson.getObjectMapper();
+    public MappingJackson2HttpMessageConverter mappingJackson2HttpMessageConverter() {
+        MappingJackson2HttpMessageConverter jsonConverter = new MappingJackson2HttpMessageConverter();
+        ObjectMapper objectMapper =jsonConverter.getObjectMapper();
+        SimpleModule module = new SimpleModule("Stream");
+        module.addSerializer(CloseableIterator.class, new JsonSerializer<CloseableIterator>() {
+            @Override
+            public void serialize(CloseableIterator value, JsonGenerator gen, SerializerProvider serializers)
+                    throws IOException, JsonProcessingException {
+                serializers.findValueSerializer(Iterator.class, null)
+                        .serialize(value, gen, serializers);
+                System.out.println("ENd: "+System.currentTimeMillis());
 
-        JsonSerializer<?> streamSer = new StdSerializer<CloseableIterator<?>>(CloseableIterator.class, true) {
-            @Override public void serialize(
-                    CloseableIterator<?> stream, JsonGenerator jgen, SerializerProvider provider
-            ) throws IOException, JsonGenerationException
-            {
-                provider.findValueSerializer(Iterator.class, null)
-                        .serialize(stream, jgen, provider);
             }
-        };
-        om.registerModule(new SimpleModule("Streams API", unknownVersion(), asList(streamSer)));
-        return jackson;
+        });
+
+        objectMapper.registerModule(module);
+        jsonConverter.setObjectMapper(objectMapper);
+        return jsonConverter;
     }
+
+//    @Bean
+//    public MappingJackson2HttpMessageConverter mappingJackson2HttpMessageConverter2() {
+//        MappingJackson2HttpMessageConverter jackson = new MappingJackson2HttpMessageConverter();
+//        ObjectMapper om = jackson.getObjectMapper();
+//
+//        JsonSerializer<?> streamSer = new StdSerializer<CloseableIterator<?>>(CloseableIterator.class, true) {
+//            @Override public void serialize(
+//                    CloseableIterator<?> stream, JsonGenerator jgen, SerializerProvider provider
+//            ) throws IOException, JsonGenerationException
+//            {
+//                provider.findValueSerializer(Iterator.class, null)
+//                        .serialize(stream, jgen, provider);
+//                System.out.println("ENd: "+System.currentTimeMillis());
+//            }
+//        };
+//        om.registerModule(new SimpleModule("Streams API", unknownVersion(), asList(streamSer)));
+//        return jackson;
+//    }
 
 
     @Bean
     public HttpMessageConverters customConverters() {
-        return new HttpMessageConverters(new CsvMessageWriter('\t', '"'));
+        return new HttpMessageConverters(mappingJackson2HttpMessageConverter());
     }
 
 
@@ -246,15 +244,16 @@ public class SampleController implements AsyncConfigurer {
 
     @RequestMapping(value = "/stream", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_UTF8_VALUE)
     @ResponseBody
-    public CloseableIterator<SampleEntity> stream(@RequestParam(value="no") int no) throws IOException {
+    public CloseableIterator<SampleEntity> stream(@RequestParam(value="no") int no,@RequestParam(value="page", defaultValue = "10000") int page) throws IOException {
 
         CriteriaQuery criteriaQuery = new CriteriaQuery(new Criteria());
         criteriaQuery.addIndices(INDEX_NAME);
         criteriaQuery.addTypes(TYPE_NAME);
-        //criteriaQuery.addCriteria(new Criteria("id").lessThan(100));
-        criteriaQuery.addCriteria(new Criteria("rate").lessThanEqual(no));
+        criteriaQuery.addCriteria(new Criteria("id").lessThan(no));
         //criteriaQuery.addFields();
-        criteriaQuery.setPageable(PageRequest.of(0, 2));
+        criteriaQuery.setPageable(PageRequest.of(0, page));
+
+        System.out.println("Start: "+System.currentTimeMillis());
 
         CloseableIterator<SampleEntity> stream = elasticsearchTemplate.stream(criteriaQuery, SampleEntity.class);
 
@@ -263,13 +262,13 @@ public class SampleController implements AsyncConfigurer {
 
     @RequestMapping(value = "/stream2", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_UTF8_VALUE)
     @ResponseBody
-    public List<SampleEntity> stream2(HttpServletResponse response) throws IOException {
+    public List<SampleEntity> stream2(@RequestParam(value="no") int no,@RequestParam(value="page", defaultValue = "10000") int page) throws IOException {
 
         CriteriaQuery criteriaQuery = new CriteriaQuery(new Criteria());
         criteriaQuery.addIndices(INDEX_NAME);
         criteriaQuery.addTypes(TYPE_NAME);
-        //criteriaQuery.addCriteria(new Criteria("rate").lessThanEqual(40000));
-        criteriaQuery.setPageable(PageRequest.of(0, 5000));
+        criteriaQuery.addCriteria(new Criteria("rate").lessThanEqual(no));
+        criteriaQuery.setPageable(PageRequest.of(0, page));
 
         CloseableIterator<SampleEntity> stream = elasticsearchTemplate.stream(criteriaQuery, SampleEntity.class);
 
@@ -328,7 +327,7 @@ public class SampleController implements AsyncConfigurer {
                 out -> {
                     //StreamingGZIPOutputStream gzip = new StreamingGZIPOutputStream(out);
 
-                    final LinkedBlockingQueue queue = new LinkedBlockingQueue<List<SampleEntity>>();
+                    final ConcurrentLinkedQueue queue = new ConcurrentLinkedQueue<List<SampleEntity>>();
 
                     CriteriaQuery criteriaQuery = new CriteriaQuery(new Criteria());
                     criteriaQuery.addIndices(INDEX_NAME);
@@ -338,11 +337,116 @@ public class SampleController implements AsyncConfigurer {
 
                     System.out.println("========");
 
-                    CompletableFuture<Void> many = CompletableFuture.allOf(eventProducer(queue, criteriaQuery, out), eventConsumer(queue, out));
 
-                    many.whenComplete((result, ex) -> System.out.println( "done."));
+                    List<CompletableFuture<String>> futures = Arrays.asList(
+                            CompletableFuture.supplyAsync(
+                                    () -> {
+                                        boolean done = false;
+                                        while (!done) {
+                                            try {
+                                                Object u = queue.poll();
+                                                if (u!=null ) {
+                                                    WorkingUnit workUnit = (WorkingUnit) u;
+                                                    if (workUnit.getItem() != null) {
+                                                        System.out.println("write :" + workUnit.getSeq());
+                                                        out.write(objectMapper().writeValueAsString(workUnit.getItem()).getBytes());
+                                                    }
+                                                    if (workUnit.isLast()) done = true;
+                                                }
+                                            } catch (Exception e) {
+                                                //e.printStackTrace();
+                                            }
+                                        }
+                                        return "Consumer Done";
+                                    }
+                            ),
+                            CompletableFuture.supplyAsync(
+                                    () -> {
+                                        long scrollTimeInMillis = TimeValue.timeValueMinutes(1L).millis();
+                                        final ScrolledPage<SampleEntity> scroll1 = (ScrolledPage) elasticsearchTemplate.startScroll(scrollTimeInMillis, criteriaQuery, SampleEntity.class);
+                                        int i= 0;
+
+                                        Iterator<SampleEntity> currentHits = scroll1.iterator();
+                                        String scrollId = scroll1.getScrollId();
+                                        boolean finished = false;
+
+                                        if (scroll1.hasContent()) {
+                                            queue.offer(new WorkingUnit(i++, finished, scroll1.getContent()));
+                                            System.out.println("get :"+ i);
+                                        } else {
+                                            finished = true;
+                                        }
+
+
+                                        while (!finished ) {
+                                            ScrolledPage scroll = (ScrolledPage) elasticsearchTemplate.continueScroll(scrollId, scrollTimeInMillis, SampleEntity.class);
+                                            currentHits = scroll.iterator();
+                                            finished = !currentHits.hasNext();
+                                            scrollId = scroll.getScrollId();
+                                            if (scroll.hasContent()) {
+                                                i++;
+                                                queue.offer(new WorkingUnit(i, finished, scroll.getContent()));
+                                                System.out.println("get :"+ i);
+                                            }
+                                        }
+
+                                        queue.offer(new WorkingUnit(true, null));
+
+                                        return "Producer Done";
+                                    })
+                    );
+                    CompletableFuture<String> c = anyOf(futures);
+                    log.info(c.join());
+
+
+
+                    //CompletableFuture<Object> many = CompletableFuture.anyOf(eventProducer(queue, criteriaQuery, out), eventConsumer(queue, out));
+
+                    //many.whenComplete((result, ex) -> System.out.println( "done."));
                 });
 
+    }
+
+    public static <T> CompletableFuture<T> anyOf(List<? extends CompletionStage<? extends T>> l) {
+
+        CompletableFuture<T> f=new CompletableFuture<>();
+        Consumer<T> complete=f::complete;
+        CompletableFuture.allOf(
+                l.stream().map(s -> s.thenAccept(complete)).toArray(CompletableFuture<?>[]::new)
+        ).exceptionally(ex -> { f.completeExceptionally(ex); return null; });
+        return f;
+    }
+
+    public class ConcurrentStack<E> {
+        AtomicReference<Node<E>> head = new AtomicReference<Node<E>>();
+
+        public void push(E item) {
+            Node<E> newHead = new Node<E>(item);
+            Node<E> oldHead;
+            do {
+                oldHead = head.get();
+                newHead.next = oldHead;
+            } while (!head.compareAndSet(oldHead, newHead));
+        }
+
+        public E pop() {
+            Node<E> oldHead;
+            Node<E> newHead;
+            do {
+                oldHead = head.get();
+                if (oldHead == null)
+                    return null;
+                newHead = oldHead.next;
+            } while (!head.compareAndSet(oldHead,newHead));
+            return oldHead.item;
+        }
+
+        class Node<E> {
+            final E item;
+            Node<E> next;
+
+            public Node(E item) { this.item = item; }
+        }
     }
 
     public class WorkingUnit {
@@ -387,11 +491,11 @@ public class SampleController implements AsyncConfigurer {
     }
 
     @Async
-    public CompletableFuture<String> eventConsumer(LinkedBlockingQueue<WorkingUnit> queue, OutputStream out) {
+    public CompletableFuture<String> eventConsumer(ConcurrentLinkedQueue<WorkingUnit> queue, OutputStream out) {
         boolean done = false;
         while(!done) {
             try {
-                WorkingUnit workUnit = queue.take();
+                WorkingUnit workUnit = queue.poll();
                 if (workUnit.getItem()!=null) {
                     System.out.println("write :" + workUnit.getSeq());
                     out.write(objectMapper().writeValueAsString(workUnit.getItem()).getBytes());
@@ -405,7 +509,7 @@ public class SampleController implements AsyncConfigurer {
     }
 
     @Async
-    public CompletableFuture<String> eventProducer(LinkedBlockingQueue queue,CriteriaQuery criteriaQuery, OutputStream out) {
+    public CompletableFuture<String> eventProducer(ConcurrentLinkedQueue queue,CriteriaQuery criteriaQuery, OutputStream out) {
         long scrollTimeInMillis = TimeValue.timeValueMinutes(1L).millis();
         final ScrolledPage<SampleEntity> page = (ScrolledPage) elasticsearchTemplate.startScroll(scrollTimeInMillis, criteriaQuery, SampleEntity.class);
         int i= 0;
@@ -415,7 +519,7 @@ public class SampleController implements AsyncConfigurer {
         boolean finished = false;
 
         if (page.hasContent()) {
-            queue.add(new WorkingUnit(i++,finished,page.getContent()));
+            queue.offer(new WorkingUnit(i++, finished, page.getContent()));
             System.out.println("get :"+ i);
         } else {
             finished = true;
@@ -429,8 +533,13 @@ public class SampleController implements AsyncConfigurer {
             scrollId = scroll.getScrollId();
             if (scroll.hasContent()) {
                 i++;
-                queue.add(new WorkingUnit(i,finished,scroll.getContent()));
+                queue.offer(new WorkingUnit(i, finished, scroll.getContent()));
                 System.out.println("get :"+ i);
+            }
+            try {
+                Thread.sleep(10000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             }
         }
 

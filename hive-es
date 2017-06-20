@@ -1,0 +1,395 @@
+
+Home
+Web production Programming Network development MOVIE MEDIA visual design BigData Data security System DB shell column Top Search:　http 　explanation 　ddos 　house 　house house nest 　scripts 
+Search
+Current Location: Home > BigData >
+Read and write data using Hive in ElasticSearch
+Release time: 2017-02-24 17:23 | author: admin | Source: Unknown | Views: 1200 Pen
+Keywords: hive, elasticsearch, integration, integration
+
+ElasticSearch already integrated with big data technology framework YARN, Hadoop, Hive, Pig, Spark, Flume, etc. used together, especially in the new information, they can use the distributed task to add index data, especially in the information platform , a lot of information stored in the Hive, a Hive operation ElasticSearch data in, will greatly facilitate the development of staff. Here the record about Hive and ElasticSearch integration, query and adding data configuration during use. Based Hive0.13.1, Hadoop-cdh5.0, ElasticSearch 2.1.0.
+
+By reading the Hive and statistical analysis of data ElasticSearch
+
+ElasticSearch the available information
+
+_index：lxw1234
+_type：tags
+_id：使用者ID（cookieid）
+欄位：area、media_view_tags、interest
+
+elasticsearch
+
+Hive build the table
+
+Since ElasticSearch version I used was 2.1.0, so you must use elasticsearch-hadoop-2.2.0 to support, if the ES version is less than 2.1.0, you can use elasticsearch-hadoop-2.1.2.
+
+Download: https: //www.elastic.co/downloads/hadoop
+
+01
+add jar file:///home/liuxiaowen/elasticsearch-hadoop-2.2.0-beta1/dist/elasticsearch-hadoop-hive-2.2.0-beta1.jar;<font></font>
+02
+CREATE EXTERNAL TABLE lxw1234_es_tags (<font></font>
+03
+cookieid string,<font></font>
+04
+area string,<font></font>
+05
+media_view_tags string,<font></font>
+06
+interest string <font></font>
+07
+)<font></font>
+08
+STORED BY 'org.elasticsearch.hadoop.hive.EsStorageHandler'<font></font><font><font>
+09
+TBLPROPERTIES (</font></font><font></font><font><font>
+10
+'Es.nodes' = '172.16.212.17:9200,172.16.212.102:9200'</font></font><font></font>
+11
+'es.index.auto.create' = 'false',<font></font>
+12
+'es.resource' = 'lxw1234/tags',<font></font>
+13
+'es.read.metadata' = 'true',<font></font>
+14
+'es.mapping.names' = 'cookieid:_metadata._id, area:area, media_view_tags:media_view_tags, interest:interest');<font></font>
+Note: Because the ES, lxw1234 / tags of _id is CookieID, in order to put enantiomer _id field Hive table must be used in this way: 
+'es.read.metadata' = 'to true', 
+'ES. mapping.names' = 'cookieid: _metadata._id, ...'
+
+Query data in the Hive
+
+elasticsearch
+
+Can query the information has been normal.
+
+Performing SELECT COUNT (1) FROM lxw1234_es_tags; Hive is performed by MapReduce, each slice using a Map Tasks:
+
+elasticsearch
+
+Can specify search conditions in the external Hive table, only the filtered query data. For example, the following statement search table built from the ES _id = 98E5D2DE059F1D563D8565 of record:
+
+01
+CREATE EXTERNAL TABLE lxw1234_es_tags_2 (<font></font><font><font>
+02
+cookieid string,</font></font><font></font><font><font>
+03
+area string,</font></font><font></font><font><font>
+04
+media_view_tags string,</font></font><font></font><font><font>
+05
+interest string </font></font><font></font><font><font>
+06
+)</font></font><font></font><font><font>
+07
+STORED BY 'org.elasticsearch.hadoop.hive.EsStorageHandler'</font></font><font></font><font><font>
+08
+TBLPROPERTIES (</font></font><font></font><font><font>
+09
+'Es.nodes' = '172.16.212.17:9200,172.16.212.102:9200'</font></font><font></font><font><font>
+10
+'es.index.auto.create' = 'false',</font></font><font></font><font><font>
+11
+'es.resource' = 'lxw1234/tags',</font></font><font></font><font><font>
+12
+'es.read.metadata' = 'true',</font></font><font></font>
+13
+'es.mapping.names' = 'cookieid:_metadata._id, area:area, media_view_tags:media_view_tags, interest:interest',<font></font>
+14
+'es.query' = '?q=_id:98E5D2DE059F1D563D8565'<font></font>
+15
+);<font></font>
+16
+<font></font>
+17
+hive> select * from lxw1234_es_tags_2;<font></font>
+18
+OK<font></font><font><font>
+19
+98E5D2DE059F1D563D8565 Sichuan | Chengdu Shopping | 1 Shopping | 1</font></font><font></font>
+20
+Time taken: 0.096 seconds, Fetched: 1 row(s)<font></font>
+If the amount of data is small, you can use the Hive Local mode to perform, so do not have to submit to the Hadoop cluster:
+
+In the Hive set:
+
+01
+set hive.exec.mode.local.auto.inputbytes.max=134217728;<font></font>
+02
+set hive.exec.mode.local.auto.tasks.max=10;<font></font>
+03
+set hive.exec.mode.local.auto=true;<font></font>
+04
+set fs.defaultFS=file:///;<font></font>
+05
+<font></font>
+06
+hive> select area,count(1) as cnt from lxw1234_es_tags group by area order by cnt desc limit 20;<font></font>
+07
+Automatically selecting local only mode for query<font></font>
+08
+Total jobs = 2<font></font>
+09
+Launching Job 1 out of 2<font></font>
+10
+…..<font></font><font><font>
+11
+Execution log at: /tmp/liuxiaowen/liuxiaowen_20151211133030_97b50138-d55d-4a39-bc8e-cbdf09e33ee6.log</font></font><font></font>
+12
+Job running in-process (local Hadoop)<font></font>
+13
+Hadoop job information for null: number of mappers: 0; number of reducers: 0<font></font>
+14
+2015-12-11 13:30:59,648 null map = 100%,  reduce = 100%<font></font>
+15
+Ended Job = job_local1283765460_0001<font></font>
+16
+Execution completed successfully<font></font>
+17
+MapredLocal task succeeded<font></font><font><font>
+18
+OK</font></font><font></font><font><font>
+19
+Beijing | Beijing 10</font></font><font></font><font><font>
+20
+Sichuan | Chengdu 4</font></font><font></font><font><font>
+21
+Chongqing | Chongqing 3</font></font><font></font><font><font>
+22
+Shanxi | Taiyuan 3</font></font><font></font><font><font>
+23
+Shanghai | Shanghai 3</font></font><font></font><font><font>
+24
+Guangdong | Shenzhen 3</font></font><font></font><font><font>
+25
+Hubei | Wuhan 2</font></font><font></font><font><font>
+26
+Shaanxi | Xi'an 2</font></font><font></font><font><font>
+27
+Fujian | Xiamen 2</font></font><font></font><font><font>
+28
+Guangdong | Zhongshan 2</font></font><font></font><font><font>
+29
+Fujian | Sanming 2</font></font><font></font><font><font>
+30
+Shandong | Jining 2</font></font><font></font><font><font>
+31
+Gansu | Lanzhou 2</font></font><font></font><font><font>
+32
+Anhui | Hefei 2</font></font><font></font><font><font>
+33
+Hunan | Changsha 2</font></font><font></font><font><font>
+34
+Hunan | Xiangxi 2</font></font><font></font><font><font>
+35
+Henan | Luoyang 2</font></font><font></font><font><font>
+36
+Jiangsu | Nanjing 2</font></font><font></font><font><font>
+37
+Heilongjiang | Harbin 2</font></font><font></font><font><font>
+38
+Guangxi | Nanning 2</font></font><font></font>
+39
+Time taken: 13.037 seconds, Fetched: 20 row(s)<font></font>
+40
+hive><font></font>
+Soon completed the inquiry and statistics.
+
+Write information to ElasticSearch by Hive
+
+Hive build the table
+
+01
+<font><font>add jar file:///home/liuxiaowen/elasticsearch-hadoop-2.2.0-beta1/dist/elasticsearch-hadoop-hive-2.2.0-beta1.jar;</font></font><font></font>
+02
+CREATE EXTERNAL TABLE lxw1234_es_user_tags (<font></font><font><font>
+03
+cookieid string,</font></font><font></font><font><font>
+04
+area string,</font></font><font></font>
+05
+gendercode STRING,<font></font>
+06
+birthday STRING,<font></font>
+07
+jobtitle STRING,<font></font>
+08
+familystatuscode STRING,<font></font><font><font>
+09
+haschildrencode STRING</font></font><font></font><font><font>
+10
+media_view_tags string,</font></font><font></font>
+11
+order_click_tags STRING,<font></font><font><font>
+12
+search_egine_tags STRING,</font></font><font></font>
+13
+interest string ) <font></font><font><font>
+14
+STORED BY 'org.elasticsearch.hadoop.hive.EsStorageHandler'</font></font><font></font><font><font>
+15
+TBLPROPERTIES (</font></font><font></font><font><font>
+16
+'Es.nodes' = '172.16.212.17:9200,172.16.212.102:9200'</font></font><font></font>
+17
+'es.index.auto.create' = 'true',<font></font>
+18
+'es.resource' = 'lxw1234/user_tags',<font></font>
+19
+'es.mapping.id' = 'cookieid',<font></font>
+20
+'es.mapping.names' = 'area:area,<font></font>
+21
+gendercode:gendercode,<font></font>
+22
+birthday:birthday,<font></font><font><font>
+23
+jobTitle: jobTitle,</font></font><font></font>
+24
+familystatuscode:familystatuscode,<font></font><font><font>
+25
+haschildrencode: haschildrencode,</font></font><font></font>
+26
+media_view_tags:media_view_tags,<font></font>
+27
+order_click_tags:order_click_tags,<font></font><font><font>
+28
+search_egine_tags: search_egine_tags,</font></font><font></font>
+29
+interest:interest');<font></font>
+It is noted here under : If data is inserted into _id necessary to set 'es.mapping.id' = 'cookieid' argument, field indicates CookieID Hive corresponding to the ES _id, and es.mapping. enantiomer of the names do not need to, and read this time is not the same configuration.
+
+Close Hive speculative execution, execution INSERT:
+
+01
+SET hive.mapred.reduce.tasks.speculative.execution = false;<font></font>
+02
+SET mapreduce.map.speculative = false;<font></font>
+03
+SET mapreduce.reduce.speculative = false;<font></font>
+04
+<font></font>
+05
+INSERT overwrite TABLE lxw1234_es_user_tags <font></font>
+06
+SELECT cookieid,<font></font>
+07
+area,<font></font>
+08
+gendercode,<font></font>
+09
+birthday,<font></font><font><font>
+10
+job title,</font></font><font></font>
+11
+familystatuscode,<font></font><font><font>
+12
+haschildrencode,</font></font><font></font>
+13
+media_view_tags,<font></font>
+14
+order_click_tags,<font></font><font><font>
+15
+search_egine_tags,</font></font><font></font>
+16
+interest <font></font>
+17
+FROM source_table;<font></font>
+Note: If the ES cluster of small-scale, but source_table particularly large amount of data, the number of tasks much Map of time, will lead to error:
+
+1
+Caused by: org.elasticsearch.hadoop.rest.EsHadoopInvalidRequest: <font></font>
+2
+FOUND unrecoverable error [172.16.212.17:9200] returned Too Many Requests(429) - rejected <font></font>
+3
+execution of org.elasticsearch.action.support.replication.TransportReplicationAction$PrimaryPhase$1@b6fa90f <font></font>
+4
+ON EsThreadPoolExecutor[bulk, queue capacity = 50, <font></font>
+5
+org.elasticsearch.common.util.concurrent.EsThreadPoolExecutor@22e73289[Running, pool size = 32, active threads = 32, queued tasks = 52, completed tasks = 12505]]; <font></font>
+6
+Bailing out..<font></font>
+The reason is that too much Map number of tasks, too many concurrent requests sent to the ES. 
+The ES and cluster size and bulk argument about the set, yet to figure it out. 
+After source_table reduce the amount of data (that is, reduce the number of Map tasks), do not have this error.
+
+After execution, query data lxw1234 / user_tags in ES:
+
+1
+curl -XGET http://172.16.212.17:9200/lxw1234/user_tags/_search?pretty -d '<font></font>
+2
+{<font></font>
+3
+    "query" : {<font></font>
+4
+        "match" : {<font></font>
+5
+            "area" : "成都"<font></font>
+6
+        }<font></font>
+7
+    }<font></font>
+8
+}'<font></font>
+elasticsearch
+
+Data has been written to ElasticSearch in.
+
+to sum up
+
+Hive will use the new data to ElasticSearch is still very useful, because our data are in HDFS, Hive can be queried by.
+
+In addition, you can query by Hive ES data, and do complex statistics and analysis on it, but the performance in general, not as the use of ES native API, also, or has not mastered the use of skills, continue to study later.
+
+Related Reading:
+
+ElasticSearch cluster installation configuration
+
+ElasticSearch integration with Hive official archives
+
+You can focus on big data fields lxw of , or join the mailing list at any time to receive blog update notification messages.
+
+ 
+
+If you think this blog is helpful to you, please sponsorship author .
+
+Reproduced please specify: LXW of big data fields >> use Hive to read and write data in ElasticSearch
+
+Like ( 1 )
+award
+Share ( 0 )
+Previous: Characteristics of API Spark machine learning process (a) Next: higher compression ratio, better performance & # 8211; to optimize the use of ORC Hive file format
+related information
+SecureCRT use of port forwarding (17 years February 27)Hive, MapReduce, Spark distributed (17 years February 24)Yarn fair scheduler Schedul Fair (17 of February 24)User self-service one-stop data access (17 years February 24)Local ORC write Java archive (Hive2 the AP (17 of February 24)Apache Kylin manual and management (17 years February 24)Use Count D in Apache Kylin in (17 years, 24 February)Saiku combined Hive bigger and multi-dimensional data (17 years February 24)
+Top Recommended
+Hive series of articles to learn together
+Big data platform task scheduling and monitoring
+Hadoop new resource scheduling strategy -
+Ads Spark MLlib realization of the pre-click
+Heterogeneous Data Sources massive pay
+JAVA common string transfer date
+Wrote big data development for beginners
+hadoop mapreduce program jar package version
+Internet line at the big data environment
+Recent changes
+· Heterogeneous Data Sources massive pay
+· Hadoop jar MapReduce programming package version
+· Addressed big data development for beginners
+· JAVA generic string transfer date
+· Advertising Spark MLlib realization of the pre-click
+· Hadoop new resource scheduling strategy -
+· Big data platform for task scheduling and monitoring
+· Learn together Hive series
+· Use of SecureCRT port forwarding function
+Random browsing
+· Use ElasticSearch as big data
+· Big data deduplication BloomFi statistical purposes
+· The Spark operand: RDD action Actio
+· The Java file reading and writing Daquan
+· Huayang Data Analysis System V self
+· Flume in TaildirSource
+· From data warehouse to big data, resources
+· Hive optimization of & # 8212; & # 8
+· Hive and Hive entry function Daquan
+2010-2020 home house nest Copyright
